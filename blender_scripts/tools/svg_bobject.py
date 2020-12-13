@@ -1,77 +1,112 @@
 import imp
 from copy import deepcopy
-import winsound
+
+# import winsound
 
 import sys
-sys.path.append('C:\\Users\\justi\\Documents\\CodeProjects\\Primer\\blender_scripts')
+
+sys.path.append("C:\\Users\\justi\\Documents\\CodeProjects\\Primer\\blender_scripts")
 
 import bobject
+
 imp.reload(bobject)
 from bobject import *
 
 import constants
+
 imp.reload(constants)
 from constants import *
 
 import helpers
+
 imp.reload(helpers)
 from helpers import *
 
+import numpy as np
+
 
 class SVGBobject(Bobject):
-    """docstring for ."""
+    """docstring for .
+
+
+    Attributes
+    ----------
+    paths: list(str)
+        Paths to the SVG files.
+
+    morph_chains: list(list(`.Bobject`)
+        List containing the lists of curves defining the morph chain. Each outer list
+        corresponds to a chain. Each chain contains the curves that morph into each other.
+
+    lists_of_copies: list(list(`.Bboject`))
+        List of the lists containing copies of the curves.
+
+    imported_svg_data: dict()
+        Dictionary of dictionaries. The key is the path of the curve, and the value another
+        dictionary. This dictionary has as a key "curves"" and its values are the curves.
+
+
+    """
+
     def __init__(self, *filenames, **kwargs):
         super().__init__(**kwargs)
 
-        if 'vert_align_centers' in kwargs:
-            self.vert_align_centers = kwargs['vert_align_centers']
+        if "vert_align_centers" in kwargs:
+            self.vert_align_centers = kwargs["vert_align_centers"]
         else:
-            self.vert_align_centers = 'x_and_y'
+            self.vert_align_centers = "x_and_y"
 
-        if 'centered' in kwargs:
-            self.centered = kwargs['centered']
+        if "centered" in kwargs:
+            self.centered = kwargs["centered"]
         else:
             self.centered = False
 
-        if 'color' in kwargs:
-            self.default_color = kwargs['color']
+        if "color" in kwargs:
+            self.default_color = kwargs["color"]
         else:
-            self.default_color = 'color2'
+            self.default_color = "color2"
 
-        if RENDER_QUALITY == 'medium' or RENDER_QUALITY == 'high':
-            default_transition_type = 'morph'
+        if RENDER_QUALITY == "medium" or RENDER_QUALITY == "high":
+            default_transition_type = "morph"
         else:
-            default_transition_type = 'instant'
-        self.transition_type = self.get_from_kwargs('transition_type', default_transition_type)
-        self.reindex_points_before_morph = \
-                    self.get_from_kwargs('reindex_points_before_morph', True)
-        self.lazy_morph = self.get_from_kwargs('lazy_morph', True)
-        self.min_length = self.get_from_kwargs('min_length', 1)
+            default_transition_type = "instant"
+        self.transition_type = self.get_from_kwargs(
+            "transition_type", default_transition_type
+        )
+        self.reindex_points_before_morph = self.get_from_kwargs(
+            "reindex_points_before_morph", True
+        )
+        self.lazy_morph = self.get_from_kwargs("lazy_morph", True)
+        self.min_length = self.get_from_kwargs("min_length", 1)
 
+        # Creating and importing SVGs
+        # ----------------------------------------------------------------------------------
         self.get_file_paths(filenames)
         self.import_svg_data()
         self.align_figures()
-        if self.transition_type == 'morph':
+
+        # Setting up transitions
+        # ----------------------------------------------------------------------------------
+        if self.transition_type == "morph":
             print("Making morph chains")
             self.make_morph_chains()
             print("Processing morph chains")
-            self.process_morph_chains() #Add splines and points for centering
-                                        #and smooth morphing
+            self.process_morph_chains()  # Add splines and points for centering
+            # and smooth morphing
             print("Making rendered curve objects")
             self.make_rendered_curve_bobjects()
             self.make_lookup_table()
 
-        elif self.transition_type == 'instant':
+        elif self.transition_type == "instant":
             self.rendered_bobject_lists = []
             for svg in self.paths:
                 rendered_bobject_list = []
-                for curve in self.imported_svg_data[svg]['curves']:
+                for curve in self.imported_svg_data[svg]["curves"]:
                     new_curve = curve.ref_obj.children[0].copy()
                     new_curve.data = curve.ref_obj.children[0].data.copy()
                     apply_material(new_curve, self.default_color)
                     new_curve_bobj = bobject.Bobject(
-                        objects = [new_curve],
-                        location = curve.ref_obj.location
+                        objects=[new_curve], location=curve.ref_obj.location
                     )
                     rendered_bobject_list.append(new_curve_bobj)
                 self.rendered_bobject_lists.append(rendered_bobject_list)
@@ -79,17 +114,17 @@ class SVGBobject(Bobject):
 
         print("SVG Bobject initialized " + str(filenames[0]))
 
-        self.copyable_null = None #I think this might be unnecessary
+        self.copyable_null = None  # I think this might be unnecessary
 
         self.active_path = self.paths[0]
 
     def add_to_blender(self, **kwargs):
-        if 'appear_mode' in kwargs:
-            appear_mode = kwargs['appear_mode']
+        if "appear_mode" in kwargs:
+            appear_mode = kwargs["appear_mode"]
         else:
-            appear_mode = 'per_curve'
+            appear_mode = "per_curve"
 
-        if self.transition_type == 'instant':
+        if self.transition_type == "instant":
             initial_shape = self.rendered_bobject_lists[0]
             for bobj in initial_shape:
                 self.add_subbobject(bobj)
@@ -100,160 +135,173 @@ class SVGBobject(Bobject):
                     bobj.superbobject = self
 
         else:
-        #This part is a bit fragile because it assumes appear_frame is in kwargs
-            if appear_mode == 'per_curve':
-                #Convert time args to frames. Need to do this before passing to
-                #super so timing can be manipulated.
-                if 'appear_time' in kwargs:
-                    if 'appear_frame' in kwargs:
-                        raise Warning("You defined both start frame and start time." + \
-                                      "Just do one, ya dick.")
-                    kwargs['appear_frame'] = kwargs['appear_time'] * FRAME_RATE
-                    kwargs['appear_time'] = None #Avoid passing non-None appear
-                                                  #time to super
-                #Bobject appears early but with each curve at size zero, then
-                #the curves morph to non-zero size, making it look like the
-                #curves appear independently.
-                kwargs['appear_frame'] -= DEFAULT_MORPH_TIME
-                if 'subbobject_timing' in kwargs:
-                    if isinstance(kwargs['subbobject_timing'], list):
-                        for time in kwargs['subbobject_timing']:
+            # This part is a bit fragile because it assumes appear_frame is in kwargs
+            if appear_mode == "per_curve":
+                # Convert time args to frames. Need to do this before passing to
+                # super so timing can be manipulated.
+                if "appear_time" in kwargs:
+                    if "appear_frame" in kwargs:
+                        raise Warning(
+                            "You defined both start frame and start time."
+                            + "Just do one, ya dick."
+                        )
+                    kwargs["appear_frame"] = kwargs["appear_time"] * FRAME_RATE
+                    kwargs["appear_time"] = None  # Avoid passing non-None appear
+                    # time to super
+                # Bobject appears early but with each curve at size zero, then
+                # the curves morph to non-zero size, making it look like the
+                # curves appear independently.
+                kwargs["appear_frame"] -= DEFAULT_MORPH_TIME
+                if "subbobject_timing" in kwargs:
+                    if isinstance(kwargs["subbobject_timing"], list):
+                        for time in kwargs["subbobject_timing"]:
                             time += DEFAULT_MORPH_TIME
                 else:
-                    kwargs['subbobject_timing'] = DEFAULT_MORPH_TIME
+                    kwargs["subbobject_timing"] = DEFAULT_MORPH_TIME
 
-            if 'transition_time' in kwargs:
-                transition_time = kwargs['transition_time']
+            if "transition_time" in kwargs:
+                transition_time = kwargs["transition_time"]
             else:
                 transition_time = DEFAULT_MORPH_TIME
 
             super().add_to_blender(**kwargs)
             self.morph_figure(
                 0,
-                start_frame = self.appear_frame + DEFAULT_MORPH_TIME,
-                duration = transition_time
+                start_frame=self.appear_frame + DEFAULT_MORPH_TIME,
+                duration=transition_time,
             )
 
     def disappear(self, **kwargs):
-        if 'disappear_mode' in kwargs:
-            disappear_mode = kwargs['appear_mode']
+        if "disappear_mode" in kwargs:
+            disappear_mode = kwargs["appear_mode"]
         else:
-            disappear_mode = 'per_curve'
+            disappear_mode = "per_curve"
 
-        if 'animate' in kwargs:
-            animate = kwargs['animate']
+        if "animate" in kwargs:
+            animate = kwargs["animate"]
         else:
             animate = True
 
-        if disappear_mode == 'per_curve' and \
-            self.transition_type == 'morph' and animate == True:
+        if (
+            disappear_mode == "per_curve"
+            and self.transition_type == "morph"
+            and animate == True
+        ):
 
-            if 'disappear_time' in kwargs:
-                if 'disappear_frame' in kwargs:
-                    raise Warning("You defined both disappear frame and disappear time." +\
-                                  "Just do one, ya dick.")
-                kwargs['disappear_frame'] = kwargs['disappear_time'] * FRAME_RATE
-                kwargs['disappear_time'] = None #Avoid passing non-None appear
-                                              #time to super
+            if "disappear_time" in kwargs:
+                if "disappear_frame" in kwargs:
+                    raise Warning(
+                        "You defined both disappear frame and disappear time."
+                        + "Just do one, ya dick."
+                    )
+                kwargs["disappear_frame"] = kwargs["disappear_time"] * FRAME_RATE
+                kwargs["disappear_time"] = None  # Avoid passing non-None appear
+                # time to super
 
-            #Bobject appears early but with each curve at size zero, then
-            #the curves morph to non-zero size, making it look like the
-            #curves appear independently.
+            # Bobject appears early but with each curve at size zero, then
+            # the curves morph to non-zero size, making it look like the
+            # curves appear independently.
             for bobj in self.rendered_curve_bobjects:
-                bobj.disappear(disappear_frame = kwargs['disappear_frame'])
-            kwargs['disappear_frame'] += DEFAULT_MORPH_TIME
+                bobj.disappear(disappear_frame=kwargs["disappear_frame"])
+            kwargs["disappear_frame"] += DEFAULT_MORPH_TIME
             super().disappear(**kwargs)
         else:
             super().disappear(**kwargs)
 
     def make_rendered_curve_bobjects(self):
         null = new_null_curve(
-            parent = self.ref_obj,
-            location = self.ref_obj.location,
-            rotation = self.ref_obj.rotation_euler
+            parent=self.ref_obj,
+            location=self.ref_obj.location,
+            rotation=self.ref_obj.rotation_euler,
         )
 
-        #print("Max spline count is " + str(max_spline_count))
+        # print("Max spline count is " + str(max_spline_count))
         equalize_spline_count(null.objects[0], self.max_spline_count)
-        bpy.context.scene.objects.link(null.objects[0])
-        add_points_to_curve_splines(null.objects[0], total_points = self.max_point_count)
-        bpy.context.scene.objects.unlink(null.objects[0])
+        bpy.context.scene.collection.objects.link(null.objects[0])
+        add_points_to_curve_splines(null.objects[0], total_points=self.max_point_count)
+        bpy.context.scene.collection.objects.unlink(null.objects[0])
 
         self.rendered_curve_bobjects = []
         for i in range(len(self.morph_chains)):
-            #Would just deepcopy null, but that doesn't work on Blender data blocks
+            # Would just deepcopy null, but that doesn't work on Blender data blocks
             dup = null.ref_obj.children[0].copy()
             dup.data = null.ref_obj.children[0].data.copy()
             apply_material(dup, self.default_color)
-            rendered_curve = bobject.Bobject(objects = [dup], name = 'rendered')
-            rendered_curve.ref_obj.location = \
-                                self.morph_chains[i][0].ref_obj.location
-            rendered_curve.ref_obj.rotation_euler = \
-                                self.morph_chains[i][0].ref_obj.rotation_euler
+            rendered_curve = bobject.Bobject(objects=[dup], name="rendered")
+            rendered_curve.ref_obj.location = self.morph_chains[i][0].ref_obj.location
+            rendered_curve.ref_obj.rotation_euler = self.morph_chains[i][
+                0
+            ].ref_obj.rotation_euler
 
             self.add_subbobject(rendered_curve)
             self.rendered_curve_bobjects.append(rendered_curve)
 
     def make_lookup_table(self):
-        #print('Making lookup table')
-        if self.transition_type == 'morph':
-            #This function makes it easier to find the bobjects associated with
-            #individual curves/characters when coding a scene. This would otherwise
-            #be hard because the imported curves are copied and mixed into morph
-            #chains.
+        # print('Making lookup table')
+        if self.transition_type == "morph":
+            # This function makes it easier to find the bobjects associated with
+            # individual curves/characters when coding a scene. This would otherwise
+            # be hard because the imported curves are copied and mixed into morph
+            # chains.
             self.lookup_table = []
             for curve_list in self.lists_of_copies:
                 self.lookup_table.append([])
                 for cur in curve_list:
-                    #Find the morph chain where cur appears and add the
-                    #corresponding rendered curve to self.lookup_table[-1].
+                    # Find the morph chain where cur appears and add the
+                    # corresponding rendered curve to self.lookup_table[-1].
                     for i, chain in enumerate(self.morph_chains):
                         if cur in chain:
-                            self.lookup_table[-1].append(self.rendered_curve_bobjects[i])
+                            self.lookup_table[-1].append(
+                                self.rendered_curve_bobjects[i]
+                            )
                             break
-        elif self.transition_type == 'instant':
+        elif self.transition_type == "instant":
             self.lookup_table = self.rendered_bobject_lists
         else:
-            raise Warning('Lookup table not defined for transition type: ' + \
-                                                    str(self.transition_type))
+            raise Warning(
+                "Lookup table not defined for transition type: "
+                + str(self.transition_type)
+            )
 
     def import_svg_data(self):
-        self.imported_svg_data = {} #Build dictionary of imported svgs to use
-                                    #shape keys later and to avoid duplicate
-                                    #imports
+        self.imported_svg_data = {}  # Build dictionary of imported svgs to use
+        # shape keys later and to avoid duplicate
+        # imports
         for path in self.paths:
-            #Import svg and get list of new curves in Blender
+            # Import svg and get list of new curves in Blender
             if path not in self.imported_svg_data.keys():
-                self.imported_svg_data[path] = {'curves' : []}
-                #This is a dict of dicts for metadata, e.g., center and length
-                #of tex expressions
+                self.imported_svg_data[path] = {"curves": []}
+                # This is a dict of dicts for metadata, e.g., center and length
+                # of tex expressions
                 if path == None:
                     null = new_null_curve()
                     cur = null.ref_obj.children[0]
                     equalize_spline_count(cur, 1)
-                    self.imported_svg_data[path]['curves'].append(cur)
-                    #print(self.imported_svg_data[path]['curves'])
-                    #print('length: ' + str(len(cur.data.splines)))
-                    #print('length: ' + str(len(cur.data.splines[0].bezier_points)))
+                    self.imported_svg_data[path]["curves"].append(cur)
+                    # print(self.imported_svg_data[path]['curves'])
+                    # print('length: ' + str(len(cur.data.splines)))
+                    # print('length: ' + str(len(cur.data.splines[0].bezier_points)))
                     continue
 
-                previous_curves = [x for x in bpy.data.objects if x.type == 'CURVE']
-                bpy.ops.import_curve.svg(filepath = path)
-                new_curves = [x for x in bpy.data.objects if \
-                                x.type == 'CURVE' and x not in previous_curves]
-
-                #Arrange new curves relative to tex object's ref_obj
-                scale_up = TEX_LOCAL_SCALE_UP #* self.intrinsic_scale[0]
+                previous_curves = [x for x in bpy.data.objects if x.type == "CURVE"]
+                bpy.ops.import_curve.svg(filepath=path)
+                new_curves = [
+                    x
+                    for x in bpy.data.objects
+                    if x.type == "CURVE" and x not in previous_curves
+                ]
+                # Arrange new curves relative to tex object's ref_obj
+                scale_up = TEX_LOCAL_SCALE_UP  # * self.intrinsic_scale[0]
 
                 for curve in new_curves:
                     for spline in curve.data.splines:
                         for point in spline.bezier_points:
-                            point.handle_left_type = 'FREE'
-                            point.handle_right_type = 'FREE'
+                            point.handle_left_type = "FREE"
+                            point.handle_right_type = "FREE"
 
-                    #This needs to be in a separate loop because moving points before
-                    #they're all 'Free' type makes the shape warp.
-                    #It makes a cool "disappear in the wind" visual, though.
+                    # This needs to be in a separate loop because moving points before
+                    # they're all 'Free' type makes the shape warp.
+                    # It makes a cool "disappear in the wind" visual, though.
                     for spline in curve.data.splines:
                         for point in spline.bezier_points:
                             for i in range(len(point.co)):
@@ -261,329 +309,412 @@ class SVGBobject(Bobject):
                                 point.handle_left[i] *= scale_up
                                 point.handle_right[i] *= scale_up
 
-                    bpy.ops.object.select_all(action = 'DESELECT')
-                    curve.select = True
-                    bpy.ops.object.origin_set(type = "ORIGIN_GEOMETRY")
+                    bpy.ops.object.select_all(action="DESELECT")
+                    curve.select_set(True)
+                    bpy.ops.object.origin_set(type="ORIGIN_GEOMETRY")
 
-                    #This part is just meant for tex_objects
+                    # This part is just meant for tex_objects
                     if self.vert_align_centers == True:
                         loc = curve.location
+                        print(loc)
                         new_y = new_curves[0].location[1]
-                        bpy.context.scene.cursor_location = (loc[0], new_y, loc[2])
-                        bpy.ops.object.origin_set(type='ORIGIN_CURSOR')
+                        bpy.context.scene.cursor.location = (loc[0], new_y, loc[2])
+                        bpy.ops.object.origin_set(type="ORIGIN_CURSOR")
 
-                    curve.select = False
+                    curve.select_set(False)
 
-                    bpy.context.scene.objects.unlink(curve)
+                    bpy.data.collections[os.path.basename(path)].objects.unlink(curve)
+                new_curves.sort(key=lambda a: a.location[0])
+                self.imported_svg_data[path]["curves"] = new_curves
 
-                self.imported_svg_data[path]['curves'] = new_curves
-
-        #Make imported curve objects into bobjects
+        # Make imported curve objects into bobjects
         for path in self.imported_svg_data:
-            for i, curve in enumerate(self.imported_svg_data[path]['curves']):
-                curve_bobj = bobject.Bobject(objects = [curve])
-                #Make the bobject's ref_obj handle location
+            for i, curve in enumerate(self.imported_svg_data[path]["curves"]):
+                curve_bobj = bobject.Bobject(objects=[curve])
+                # Make the bobject's ref_obj handle location
                 curve_bobj.ref_obj.location = curve.location
                 curve.location = [0, 0, 0]
 
-                #curve_bobj.add_to_blender(appear_frame = 0)
+                # curve_bobj.add_to_blender(appear_frame = 0)
 
-                self.imported_svg_data[path]['curves'][i] = curve_bobj
+                self.imported_svg_data[path]["curves"][i] = curve_bobj
 
-                #if path == None:
+                # if path == None:
                 #    print()
                 #    print(self.imported_svg_data[path])
                 #    print()
-                #if path == None:
-                #self.add_subbobject(curve_bobj)
+                # if path == None:
+                # self.add_subbobject(curve_bobj)
 
-        #print(self.imported_svg_data)
-        bpy.context.scene.update()
+        # print(self.imported_svg_data)
+        bpy.context.view_layer.update()
 
     def get_file_paths(self, filenames):
+        """Get file paths for svg files."""
         self.paths = []
         for name in filenames:
-            path = os.path.join(
-                SVG_DIR,
-                name
-            ) + ".svg"
+            path = os.path.join(SVG_DIR, name) + ".svg"
             if not os.path.exists(path):
                 raise Warning("Could not find " + name + ".svg")
             self.paths.append(path)
 
     def make_morph_chains(self):
-        #Need to copy curves to avoid reusing them when looping and linking into
-        #chains below
+        """Make morph chains.
+
+        It saves the morph chains on self.morph_chains."""
+
+        # Copies of the curves
+        # ----------------------------------------------------------------------------------
+        # Need to copy curves to avoid reusing them when looping and linking into
+        # chains below
         self.lists_of_copies = []
         for path in self.paths:
             copies = []
-            for curve in self.imported_svg_data[path]['curves']:
+            for curve in self.imported_svg_data[path]["curves"]:
                 obj = curve.ref_obj.children[0].copy()
                 obj.data = curve.ref_obj.children[0].data.copy()
                 bobj = bobject.Bobject(
-                    objects = [obj],
-                    location = curve.ref_obj.location,
-                    rotation_euler = curve.ref_obj.rotation_euler,
-                    name = 'curve_copy')
+                    objects=[obj],
+                    location=curve.ref_obj.location,
+                    rotation_euler=curve.ref_obj.rotation_euler,
+                    name="curve_copy",
+                )
                 copies.append(bobj)
             self.lists_of_copies.append(copies)
 
+        # Making the morph chains
+        # ----------------------------------------------------------------------------------
         self.morph_chains = []
-        for i, path in enumerate(self.paths):
-            #print("Adding curves to morph chains for shape " + str(i + 1) + " of " + str(len(self.paths)))
-            #print()
-            #print('######################################################')
-            #print('### Morph chains round  ' + str(i) + ' ####################')
-            #print('######################################################')
-            #print()
+        # Adding curves to morph chains for shape each shape
+        for i_ind_path, _ in enumerate(self.paths):
             try:
-                #initial = self.imported_svg_data[self.paths[i]]['curves']
-                #final = self.imported_svg_data[self.paths[i + 1]]['curves']
-                initial = self.lists_of_copies[i]
-                final = self.lists_of_copies[i + 1]
-            except:
-                if i + 1 == len(self.paths):
-                    #If there's just one path, add the corresponding curves to
-                    #self.morph_chains so the first figure can still be
-                    #morphed to.
-                    if i == 0:
-                        for j in range(len(initial)):
-                            self.morph_chains.append([initial[j]])
-                    #print("That's the last one!")
+                # current_expr_curves = self.imported_svg_data[self.paths[i_ind_path]]['curves']
+                # next_expr_curves = self.imported_svg_data[self.paths[i_ind_path + 1]]['curves']
+                current_expr_curves = self.lists_of_copies[i_ind_path]
+                next_expr_curves = self.lists_of_copies[i_ind_path + 1]
+            except IndexError as error:
+                if i_ind_path + 1 == len(self.paths):
+                    # If there's just one path, add the corresponding curves to
+                    # self.morph_chains so the first figure can still be
+                    # morphed to.
+                    if i_ind_path == 0:
+                        # for j in range(len(current_expr_curves)):
+                        #     self.morph_chains.append([current_expr_curves[j]])
+                        for j_curve in current_expr_curves:
+                            self.morph_chains.append([j_curve])
                     break
-                else:
-                    raise Warning('Something went wrong in make_morph_chains')
+                raise Warning("Something went wrong in make_morph_chains") from error
 
-            if self.lazy_morph == True:
-                destinations = self.find_lazy_morph_plan(initial, final)
-                #For convenience, get inverse of destinations, caleed 'sources',
-                #which is from the perspective of the 'final' expression.
+            # Setting up sources and destinations to generate the morph chains
+            # ------------------------------------------------------------------------------
+            if self.lazy_morph is True:
+                destinations = self.find_lazy_morph_plan(
+                    current_expr_curves, next_expr_curves
+                )
+                # For convenience, get inverse of destinations, caleed 'sources',
+                # which is from the perspective of the 'next_expr_curves' expression.
                 sources = []
-                for j in range(len(final)):
+                for j in range(len(next_expr_curves)):
                     if j in destinations:
                         sources.append(destinations.index(j))
                     else:
                         sources.append(None)
             else:
-                #length = max(len(initial), len(final))
-                while len(initial) < len(final):
+                # length = max(len(current_expr_curves), len(next_expr_curves))
+                while len(current_expr_curves) < len(next_expr_curves):
                     null_curve = new_null_curve(
-                        parent = initial[-1].ref_obj.parent,
-                        location = initial[-1].ref_obj.location,
-                        rotation = initial[-1].ref_obj.rotation_euler
+                        parent=current_expr_curves[-1].ref_obj.parent,
+                        location=current_expr_curves[-1].ref_obj.location,
+                        rotation=current_expr_curves[-1].ref_obj.rotation_euler,
                     )
-                    initial.append(null_curve)
-                while len(final) < len(initial):
+                    current_expr_curves.append(null_curve)
+                while len(next_expr_curves) < len(current_expr_curves):
                     null_curve = new_null_curve(
-                        parent = final[-1].ref_obj.parent,
-                        location = final[-1].ref_obj.location,
-                        rotation = final[-1].ref_obj.rotation_euler
+                        parent=next_expr_curves[-1].ref_obj.parent,
+                        location=next_expr_curves[-1].ref_obj.location,
+                        rotation=next_expr_curves[-1].ref_obj.rotation_euler,
                     )
-                    final.append(null_curve)
-                destinations = range(len(initial))
+                    next_expr_curves.append(null_curve)
+                destinations = range(len(current_expr_curves))
                 sources = destinations
 
-            #print('Destinations and sources before pairing:')
-            #print(' Destinations', destinations)
-            #print(' Sources', sources)
-            #print()
+            print("Destinations and sources before pairing:")
+            print(" Destinations", destinations)
+            print(" Sources", sources)
+            print()
 
-            #print("  Adding curves to chains")
-            for j, (cur, dest) in enumerate(zip(initial, destinations)):
-                if dest != None:
-                    self.add_to_or_make_morph_chain(i, cur, final[dest])
+            print("  Adding curves to chains")
+
+            # Adding to the morph chain
+            # ------------------------------------------------------------------------------
+            for j_ind_curv, (j_curv, j_ind_dest) in enumerate(
+                zip(current_expr_curves, destinations)
+            ):
+                if j_ind_dest is not None:
+                    self.add_to_or_make_morph_chain(
+                        i_ind_path, j_curv, next_expr_curves[j_ind_dest]
+                    )
                 else:
-                    k = j
-                    #curves without a destination will look forward to try to
-                    #pair with a curve that has no source, but won't jump past
-                    #other curves with destinations.
-                    while k < len(sources):
-                        #Don't jump past a char with a destination
-                        if k < len(destinations): #Doing this so the next line works
-                            if destinations[k] != None: break
-                        if sources[k] == None:
-                            self.add_to_or_make_morph_chain(i, cur, final[k])
-                            sources[k] = j
-                            dest = destinations[j] = k
+                    k_ind_curv = j_ind_curv
+                    # curves without a destination will look forward to try to
+                    # pair with a curve that has no source, but won't jump past
+                    # other curves with destinations.
+                    while k_ind_curv < len(sources):
+                        # Don't jump past a char with a destination
+                        # if k_ind_curv < len(
+                        #     destinations
+                        # ):  # Doing this so the next line works
+                        #     if not destinations[k_ind_curv] is None:
+                        #         break
+                        if sources[k_ind_curv] is None:
+                            self.add_to_or_make_morph_chain(
+                                i_ind_path, j_curv, next_expr_curves[k_ind_curv]
+                            )
+                            sources[k_ind_curv] = k_ind_curv
+                            print("here")
+                            j_ind_dest = destinations[j_ind_dest] = k_ind_curv
                             break
-                        k += 1
+                        k_ind_curv += 1
 
-            #print('Destinations and sources after dest -> source match:')
-            #print(' Destinations', destinations)
-            #print(' Sources', sources)
-            #print()
+            print("Destinations and sources after dest -> source match:")
+            print(" Destinations", destinations)
+            print(" Sources", sources)
+            print()
 
-
-            for j, (cur, src) in enumerate(zip(final, sources)):
-                if src == None:
+            # Looking forward to complete curves without sources
+            # ------------------------------------------------------------------------------
+            for j, (cur, src) in enumerate(zip(next_expr_curves, sources)):
+                if src is None:
                     k = j
-                    #curves without a source will look forward to try to
-                    #pair with a curve that has no source, but won't jump past
-                    #other curves with sources.
-                    #max_index = min(len(destinations), len(sources))
+                    # curves without a source will look forward to try to
+                    # pair with a curve that has no source, but won't jump past
+                    # other curves with sources.
+                    # max_index = min(len(destinations), len(sources))
                     while k < len(destinations):
-                        #Don't jump past a char with a destination
+                        # Don't jump past a char with a destination
 
-                        if k < len(sources): #Doing this so the next line works
-                            if sources[k] != None: break
+                        # if k < len(sources):  # Doing this so the next line works
+                        #     if sources[k] != None:
+                        #         break
                         if destinations[k] == None:
-                            self.add_to_or_make_morph_chain(i, initial[k], cur)
+                            self.add_to_or_make_morph_chain(
+                                i_ind_path, current_expr_curves[k], cur
+                            )
                             sources[j] = k
                             dest = destinations[k] = j
                             break
                         k += 1
-                #bpy.context.scene.update()
+                # bpy.context.scene.update()
 
-            #print('Destinations and sources after source -> dest match:')
-            #print(' Destinations', destinations)
-            #print(' Sources', sources)
-            #print()
+            print("Destinations and sources after source -> dest match:")
+            print(" Destinations", destinations)
+            print(" Sources", sources)
+            print()
 
-            #print("  Adding null curves for destination-less curves")
-            #If dest is still None after trying to pair it with a source,
-            #just insert a zero-size curve for cur to morph to.
-            #This section is pretty hacky
+            print("  Adding null curves for destination-less curves")
+            # If dest is still None after trying to pair it with a source,
+            # just insert a zero-size curve for cur to morph to.
+            # This section is pretty hacky
+
+            # Looking forward to complete curves without sources
+            # ------------------------------------------------------------------------------
             for j, dest in enumerate(destinations):
                 if dest == None:
-                    cur = initial[j]
+                    cur = current_expr_curves[j]
                     if j > 0:
                         k = j
-                        while k >= len(final):
+                        while k >= len(next_expr_curves):
                             k -= 1
-                        loc_cur = final[k]
+                        loc_cur = next_expr_curves[k]
                     else:
-                        loc_cur = final[j]
+                        loc_cur = next_expr_curves[j]
 
-                    #print("Discontinuing chain ")
+                    # print("Discontinuing chain ")
 
                     null_curve = new_null_curve(
-                        parent = final[0].ref_obj.parent,
-                        location = loc_cur.ref_obj.location,
-                        rotation = loc_cur.ref_obj.rotation_euler
-                        #reuse_object = self.reusable_empty_curve
+                        parent=next_expr_curves[0].ref_obj.parent,
+                        location=loc_cur.ref_obj.location,
+                        rotation=loc_cur.ref_obj.rotation_euler
+                        # reuse_object = self.reusable_empty_curve
                     )
-                    self.add_to_or_make_morph_chain(i, cur, null_curve)
+                    self.add_to_or_make_morph_chain(i_ind_path, cur, null_curve)
 
-            #print("  Adding null curves for sourceless curves")
-            #If sources[j] is still None after trying to pair final[j] with
-            #a source, just insert a zero-size curve for final[j] to morph from.
+            # print("  Adding null curves for sourceless curves")
+            # If sources[j] is still None after trying to pair next_expr_curves[j] with
+            # a source, just insert a zero-size curve for next_expr_curves[j] to morph from.
             for j, src in enumerate(sources):
                 if src == None:
-                    cur = final[j]
+                    cur = next_expr_curves[j]
                     if j > 0:
                         k = j
-                        while k >= len(initial):
+                        while k >= len(current_expr_curves):
                             k -= 1
-                        loc_cur = initial[k]
+                        loc_cur = current_expr_curves[k]
                     else:
-                        loc_cur = initial[j]
+                        loc_cur = current_expr_curves[j]
 
-                    #Make the null curve if i == 1, because that means the curve
-                    #to morph from is one that is actually rendered. Otherwise,
-                    #reuse the reusable empty curve.
-                    '''if i == 1:
+                    # Make the null curve if i_ind_path == 1, because that means the curve
+                    # to morph from is one that is actually rendered. Otherwise,
+                    # reuse the reusable empty curve.
+                    """if i_ind_path == 1:
                         reuse = None
                     else:
-                        pass'''
-                        #reuse = self.reusable_empty_curve
-                    #bpy.context.scene.update()
+                        pass"""
+                    # reuse = self.reusable_empty_curve
+                    # bpy.context.scene.update()
                     null_curve = new_null_curve(
-                        parent = initial[0].ref_obj.parent,
-                        location = loc_cur.ref_obj.location,
-                        rotation = loc_cur.ref_obj.rotation_euler
-                        #reuse_object = reuse
+                        parent=current_expr_curves[0].ref_obj.parent,
+                        location=loc_cur.ref_obj.location,
+                        rotation=loc_cur.ref_obj.rotation_euler
+                        # reuse_object = reuse
                     )
-                    #self.expressions[0]['curves'].append(null_curve)
-                    #print(i)
-                    self.add_to_or_make_morph_chain(i, null_curve, cur)
+                    # self.expressions[0]['curves'].append(null_curve)
+                    # print(i_ind_path)
+                    self.add_to_or_make_morph_chain(i_ind_path, null_curve, cur)
 
-
-            '''print(destinations)
+            """print(destinations)
             print(sources)
-            print()'''
-            #print("  Okay, done with that chain")
+            print()"""
+            # print("  Okay, done with that chain")
 
-        #print("  Adding null curves to extend chains")
-        #Make sure all the chains are the same length. Relevant, e.g., if
-        #a char in the first expression disappears in the second expression,
-        #and a third expression exists. We need to extend the chain of
-        #zero-size curves to keep later functions from tripping.
+        print("  Adding null curves to extend chains")
+        # Make sure all the chains are the same length. Relevant, e.g., if
+        # a char in the first expression disappears in the second expression,
+        # and a third expression exists. We need to extend the chain of
+        # zero-size curves to keep later functions from tripping.
         chain_length = 0
         for chain in self.morph_chains:
             chain_length = max(len(chain), chain_length)
         for chain in self.morph_chains:
             while len(chain) < chain_length:
                 null_curve = new_null_curve(
-                parent = final[0].ref_obj.parent,
-                location = chain[-1].ref_obj.location,
-                rotation = chain[-1].ref_obj.rotation_euler
-                #reuse_object = self.reusable_empty_curve
+                    parent=next_expr_curves[0].ref_obj.parent,
+                    location=chain[-1].ref_obj.location,
+                    rotation=chain[-1].ref_obj.rotation_euler
+                    # reuse_object = self.reusable_empty_curve
                 )
                 chain.append(null_curve)
-                #self.add_to_or_make_morph_chain(i, chain[-1], null_curve)
+                # self.add_to_or_make_morph_chain(i_ind_path, chain[-1], null_curve)
 
-        #Print chain info
-        '''for i, chain in enumerate(self.morph_chains):
+        # Print chain info
+        for i_ind_path, chain in enumerate(self.morph_chains):
             print(
-                "Chain " + str(i + 1) + " of " + str(len(self.morph_chains)) + \
-                " which are each of length " + str(len(chain))
+                "Chain {0} of {1} which are of length {2}.".format(
+                    i_ind_path + 1, len(self.morph_chains), len(chain)
+                )
             )
             chain = [x.ref_obj.children[0].name for x in chain]
-            print(chain)'''
+            print(chain)
 
     def add_to_or_make_morph_chain(self, index, char1, char2):
+        """Add to or make morph chain.
+
+        This function leads with three possible cases:
+
+        1 - If there is already a morph chain, whose last character is *char1*, then *char2*
+        is added to that morph chain.
+        2 - If there is a morph chain whose length is smaller
+        than *index* this means that a null curve was needed. This morph chain is scavenged,
+        an appropriate number of null curves is added and *char1* and *char2* are added at
+        the end,
+        3 - If all morph chains have a length larger than *index*, a new morph
+        chain is created with *char1* and *char2*.
+
+        Parameters
+        ---------
+        index: int
+            Index of the expression to the current expression or path.
+
+        char1: `.Bboject`
+            Curves for character the character in the current expression.
+
+        char2: `.Bobject`
+            Curves for character in the next expression.
+        """
+        # Case 1 - Looking for *char1* at the end of one of the morph chains
+        # ----------------------------------------------------------------------------------
         for chain in self.morph_chains:
             if char1 == chain[-1]:
                 chain.append(char2)
-                '''if 'null' in char2.name:
+                """if 'null' in char2.name:
                     chain_index = self.morph_chains.index(chain)
                     print('Discontinuing chain ' + str(chain_index) + \
                           ' after inserting null curve at index ' + str(index + 1))
                     chain_names = [x.ref_obj.children[0].name for x in chain]
-                    print(chain_names)'''
+                    print(chain_names)"""
                 if len(chain) != index + 2:
                     raise Warning("Chain lengths messed up")
                 return
-        #If that doesn't exit the function, we have a new chain
+
+        # Case 2 - Try to find a morph chain small enough to added both *char1* and *char2*
+        # ----------------------------------------------------------------------------------
+        # If that doesn't exit the function, we have a new chain
         working_chain = []
         scavenged = False
-        #Scavenge for dropped chains that have ended near the right location
+        # Scavenge for dropped chains that have ended near the right location
         for chain in self.morph_chains:
             if len(chain) <= index:
                 working_chain = chain
                 scavenged = True
                 chain_index = self.morph_chains.index(chain)
-                #print("Scavenged chain")
+                # print("Scavenged chain")
                 break
-        for i in range(len(working_chain), index):
-            #-1 because we're actually adding two curves to the chain, so the
-            #chain will have length equal to index + 1 at the end of this.
+        for _ in range(len(working_chain), index):
+            # -1 because we're actually adding two curves to the chain, so the
+            # chain will have length equal to index + 1 at the end of this.
             null_curve = new_null_curve(
-                parent = self.ref_obj,
-                location = char1.ref_obj.location,
-                rotation = char1.ref_obj.rotation_euler
-                #reuse_object = self.reusable_empty_curve
+                parent=self.ref_obj,
+                location=char1.ref_obj.location,
+                rotation=char1.ref_obj.rotation_euler
+                # reuse_object = self.reusable_empty_curve
             )
             working_chain.append(null_curve)
         working_chain.append(char1)
         working_chain.append(char2)
-        if scavenged == False:
-            #print("A new chain, which means a curve had no source ")
+        # Case 3 - A new morph chain is needed
+        # ----------------------------------------------------------------------------------
+        if scavenged is False:
+            # print("A new chain, which means a curve had no source ")
             self.morph_chains.append(working_chain)
 
         if len(working_chain) != index + 2:
             raise Warning("Chain lengths messed up")
 
-    def find_lazy_morph_plan(self, expr1, expr2, min_length = None):
-        #max length of substring we bother keeping
-        #Increments if shared is still too long
-        if min_length == None:
-            min_length = self.min_length #Default = 1
+    def find_lazy_morph_plan(self, expr1, expr2, min_length=None):
+        """
+        Find the lazy morph plan.
 
-        max_shared = 10 #8! is 40320
+        Connect morphing characters to each other automatically.
+
+        Parameters
+        ----------
+        expr1: str
+            Expression
+
+        expr2: str
+            Expression
+
+        min_length: optional, int
+            Minimum length
+            # FIXME: incomplete
+
+        Returns
+        -------
+        destinations: list(int)
+            List containing the indices of *expr2* that are destinations for *expr1*, i.e.
+            the destination for the curve on *expr1* with index n is destinations[n]. This
+            destination is the index in *expr2* corresponding to the destination curve.
+        """
+        # max length of substring we bother keeping
+        # Increments if shared is still too long
+        if min_length is None:
+            min_length = self.min_length  # Default = 1
+
+        max_shared = 10  # 8! is 40320
 
         shared = get_shared_substrings(expr1, expr2)
 
+        # Remove shared strings whose length is smaller than the minimum length
         for i in range(len(shared)):
             if shared[-i][2] < min_length:
                 shared[-i] = None
@@ -600,7 +731,7 @@ class SVGBobject(Bobject):
                     removed += 1
 
             shared = [sub for sub in shared if sub != None]
-        #raise Warning("Shit's cray")
+        # raise Warning("Shit's cray")
         combos = get_substring_combos(shared)
 
         best_option = [[0, 0, 0]]
@@ -622,9 +753,9 @@ class SVGBobject(Bobject):
 
             destinations.append(destination)
 
-        #print(best_option)
-        #print("Here's the plan:")
-        #print(destinations)
+        print(best_option)
+        print("Here's the plan:")
+        print(destinations)
 
         return destinations
 
@@ -639,18 +770,17 @@ class SVGBobject(Bobject):
                     point_count = len(spline.bezier_points)
                     self.max_point_count = max(point_count, self.max_point_count)
 
-
-        #print(self.max_spline_count)
+        # print(self.max_spline_count)
 
         self.prep_log = []
         count = 0
         for chain in self.morph_chains:
             count += 1
-            #print('Processing morph chain ' + str(count) + ' of ' + str(len(self.morph_chains)))
+            # print('Processing morph chain ' + str(count) + ' of ' + str(len(self.morph_chains)))
             for link in chain:
                 already_processed = False
-                #cur = link.ref_obj.children[0]
-                '''for entry in self.prep_log:
+                # cur = link.ref_obj.children[0]
+                """for entry in self.prep_log:
                     if are_chars_same(link.ref_obj.children[0], entry[0]):
                         already_processed = True
 
@@ -669,58 +799,66 @@ class SVGBobject(Bobject):
                         new.parent = link.ref_obj
                         link.objects.append(new)
 
-                        break'''
+                        break"""
 
                 if already_processed == False:
-                    #print("Processing new curve")
-                    #entry = []
-                    #unprocessed = link.ref_obj.children[0].copy()
-                    #unprocessed.data = link.ref_obj.children[0].data.copy()
-                    #bpy.context.scene.objects.link(unprocessed)
-                    #entry.append(unprocessed)
-                    equalize_spline_count(link.ref_obj.children[0], self.max_spline_count)
-                    bpy.context.scene.objects.link(link.ref_obj.children[0])
-                    #for spline in link.ref_obj.children[0].data.splines:
+                    # print("Processing new curve")
+                    # entry = []
+                    # unprocessed = link.ref_obj.children[0].copy()
+                    # unprocessed.data = link.ref_obj.children[0].data.copy()
+                    # bpy.context.scene.objects.link(unprocessed)
+                    # entry.append(unprocessed)
+                    equalize_spline_count(
+                        link.ref_obj.children[0], self.max_spline_count
+                    )
+                    bpy.context.scene.collection.objects.link(link.ref_obj.children[0])
+                    # for spline in link.ref_obj.children[0].data.splines:
                     #    print('There were ' + str(len(spline.bezier_points)))
-                    add_points_to_curve_splines(link.ref_obj.children[0], total_points = self.max_point_count)
-                    bpy.context.scene.objects.unlink(link.ref_obj.children[0])
-                    #for spline in link.ref_obj.children[0].data.splines:
+                    add_points_to_curve_splines(
+                        link.ref_obj.children[0], total_points=self.max_point_count
+                    )
+                    bpy.context.scene.collection.objects.unlink(
+                        link.ref_obj.children[0]
+                    )
+                    # for spline in link.ref_obj.children[0].data.splines:
                     #    print('Now there are ' + str(len(spline.bezier_points)))
 
-                    #processed = link.ref_obj.children[0].copy()
-                    #processed.data = link.ref_obj.children[0].data.copy()
+                    # processed = link.ref_obj.children[0].copy()
+                    # processed.data = link.ref_obj.children[0].data.copy()
 
-                    #entry.append(processed)
-                    #self.prep_log.append(entry)
+                    # entry.append(processed)
+                    # self.prep_log.append(entry)
 
     def morph_figure(
         self,
         final_index,
-        start_time = None,
-        start_frame = None,
-        duration = DEFAULT_MORPH_TIME,
-        transition_type = None
+        start_time=None,
+        start_frame=None,
+        duration=DEFAULT_MORPH_TIME,
+        transition_type=None,
     ):
         if start_time != None:
             if start_frame != None:
-                raise Warning("You defined both start frame and start time." +\
-                              "Just do one, ya dick.")
+                raise Warning(
+                    "You defined both start frame and start time."
+                    + "Just do one, ya dick."
+                )
             start_frame = int(start_time * FRAME_RATE)
 
-        #print('Morphing ' + str(self.ref_obj.name) + ' to shape ' + str(final_index + 1) + \
+        # print('Morphing ' + str(self.ref_obj.name) + ' to shape ' + str(final_index + 1) + \
         #        ' of ' + str(len(self.paths)))
 
         self.active_path = self.paths[final_index]
-        #duration = 60
+        # duration = 60
         end_frame = start_frame + duration
         morph_pairs = []
-        #print('Start frame = ' + str(start_frame))
-        #print('End frame = ' + str(end_frame))
+        # print('Start frame = ' + str(start_frame))
+        # print('End frame = ' + str(end_frame))
 
         if transition_type == None:
             transition_type = self.transition_type
 
-        if transition_type == 'morph':
+        if transition_type == "morph":
             for curve, chain in zip(self.rendered_curve_bobjects, self.morph_chains):
                 morph_pairs.append([curve, chain[final_index]])
 
@@ -728,58 +866,66 @@ class SVGBobject(Bobject):
                 char1 = char1.objects[0]
                 char2 = char2.objects[0]
                 self.morph_curve(char1, char2)
-                #Keyframes
-                #Character location relative to parent
-                #This ensures preservation of overall expression arrangement
-                char1.parent.keyframe_insert(data_path = "location", frame = start_frame)
+                # Keyframes
+                # Character location relative to parent
+                # This ensures preservation of overall expression arrangement
+                char1.parent.keyframe_insert(data_path="location", frame=start_frame)
                 char1.parent.location = char2.parent.location
-                char1.parent.keyframe_insert(data_path = "location", frame = end_frame)
+                char1.parent.keyframe_insert(data_path="location", frame=end_frame)
 
-                char1.parent.keyframe_insert(data_path = "rotation_euler", frame = start_frame)
+                char1.parent.keyframe_insert(
+                    data_path="rotation_euler", frame=start_frame
+                )
                 char1.parent.rotation_euler = char2.parent.rotation_euler
-                char1.parent.keyframe_insert(data_path = "rotation_euler", frame = end_frame)
+                char1.parent.keyframe_insert(
+                    data_path="rotation_euler", frame=end_frame
+                )
 
-                #Shape keys
+                # Shape keys
                 eval_time = char1.data.shape_keys.key_blocks[-2].frame
                 char1.data.shape_keys.eval_time = eval_time
                 char1.data.shape_keys.keyframe_insert(
-                    data_path = 'eval_time',
-                    frame = start_frame
+                    data_path="eval_time", frame=start_frame
                 )
 
                 eval_time = char1.data.shape_keys.key_blocks[-1].frame
                 char1.data.shape_keys.eval_time = eval_time
                 char1.data.shape_keys.keyframe_insert(
-                    data_path = 'eval_time',
-                    frame = end_frame
+                    data_path="eval_time", frame=end_frame
                 )
                 char1.data.shape_keys.eval_time = 0
 
         else:
             initial = self.rendered_bobject_lists[final_index - 1]
             for bobj in initial:
-                bobj.disappear(
-                    animate = False,
-                    disappear_frame = start_frame
-                )
+                bobj.disappear(animate=False, disappear_frame=start_frame)
             final = self.rendered_bobject_lists[final_index]
             for bobj in final:
-                bobj.add_to_blender(
-                    animate = False,
-                    appear_frame = start_frame
-                )
+                bobj.add_to_blender(animate=False, appear_frame=start_frame)
 
     def add_morph_shape_keys(self, initial, final):
         if len(initial.data.splines) != len(final.data.splines):
-            #winsound.MessageBeep(type = MB_ICONEXCLAMATION)
-            print("#" + str(initial.name) + " has " + str(len(initial.data.splines)) + \
-                        " splines and " + str(final.name) + " has " + \
-                        str(len(final.data.splines)) + " splines, which is not the same number.")
+            # # windound.MessageBeep(type = MB_ICONEXCLAMATION)
+            print(
+                "#"
+                + str(initial.name)
+                + " has "
+                + str(len(initial.data.splines))
+                + " splines and "
+                + str(final.name)
+                + " has "
+                + str(len(final.data.splines))
+                + " splines, which is not the same number."
+            )
             print("#This means something went wrong when processing morph chains.")
-            print('#I gotchu this time, but you might wanna take a look back and fix the underlying issue.')
+            print(
+                "#I gotchu this time, but you might wanna take a look back and fix the underlying issue."
+            )
             if len(initial.data.splines) < len(final.data.splines):
-                raise Warning("Oh dang. I actually don't gotchu. The rendered " + \
-                                "curve is missing splines, I think.")
+                raise Warning(
+                    "Oh dang. I actually don't gotchu. The rendered "
+                    + "curve is missing splines, I think."
+                )
 
             bpy.context.scene.objects.link(final)
             equalize_spline_count(final, self.max_spline_count)
@@ -787,94 +933,105 @@ class SVGBobject(Bobject):
             bpy.context.scene.objects.unlink(final)
 
         was_hidden = False
-        if initial.hide:
+        if initial.hide_viewport:
             was_hidden = True
-        initial.hide = False
-        bpy.context.scene.objects.active = initial
-        bpy.ops.object.mode_set(mode = 'OBJECT')
-        #If absolute shape keys exist, set eval_time to zero
+        initial.hide_viewport = False
+        bpy.context.view_layer.objects.active = initial
+        bpy.ops.object.mode_set(mode="OBJECT")
+        # If absolute shape keys exist, set eval_time to zero
         try:
             initial.data.shape_keys.eval_time = 0
         except:
             pass
         bpy.ops.object.shape_key_add(from_mix=False)
         initial.data.shape_keys.use_relative = False
-        #For some reason, the default 'CARDINAL' interpolation setting caused
-        #bouncing, which would occasionally enlarge splines that should have
-        #been size zero, messing with the fill.
-        initial.data.shape_keys.key_blocks[-1].interpolation = 'KEY_LINEAR'
-        #bpy.ops.object.shape_key_retime()
+        # For some reason, the default 'CARDINAL' interpolation setting caused
+        # bouncing, which would occasionally enlarge splines that should have
+        # been size zero, messing with the fill.
+        initial.data.shape_keys.key_blocks[-1].interpolation = "KEY_LINEAR"
+        # bpy.ops.object.shape_key_retime()
 
-        #If there's only one shape key, it's the basis shape key.
+        # If there's only one shape key, it's the basis shape key.
         if len(initial.data.shape_keys.key_blocks) == 1:
-            #We should add another shape key, which will get a keyframe
+            # We should add another shape key, which will get a keyframe
             bpy.ops.object.shape_key_add(from_mix=False)
-            initial.data.shape_keys.key_blocks[-1].interpolation = 'KEY_LINEAR'
-            #initial.data.shape_keys.use_relative = False
-            #bpy.ops.object.shape_key_retime()
+            initial.data.shape_keys.key_blocks[-1].interpolation = "KEY_LINEAR"
+            # initial.data.shape_keys.use_relative = False
+            # bpy.ops.object.shape_key_retime()
 
-        bpy.ops.object.mode_set(mode = 'EDIT')
+        bpy.ops.object.mode_set(mode="EDIT")
 
-        #This might be a bit confusing, caused by the fact that I mixed up
-        #length rank and index in my original names and implementation.
-        #Could probably reimplement or at least change names.
+        # This might be a bit confusing, caused by the fact that I mixed up
+        # length rank and index in my original names and implementation.
+        # Could probably reimplement or at least change names.
         initial_spline_length_ranks = get_list_of_spline_length_ranks(initial)
         final_spline_length_ranks = get_list_of_spline_length_ranks(final)
         for i in range(len(initial.data.splines)):
-            #Get the points of the ith spline
+            # Get the points of the ith spline
             initial_points = initial.data.splines[i].bezier_points
 
-            #Okay, before we get the final points, we need to find the index of
-            #the spline with the same length rank as the ith initial spline.
+            # Okay, before we get the final points, we need to find the index of
+            # the spline with the same length rank as the ith initial spline.
 
-            #In the initial char, what is the length rank of the ith spline?
+            # In the initial char, what is the length rank of the ith spline?
             initial_length_rank = initial_spline_length_ranks[i]
-            #In the final char, what is the index of the corresponding length rank?
+            # In the final char, what is the index of the corresponding length rank?
             final_index = final_spline_length_ranks.index(initial_length_rank)
 
-            #Get the points of the final spline with the right length index
+            # Get the points of the final spline with the right length index
             final_points = final.data.splines[final_index].bezier_points
 
-            #Double check that the splines have the same number of points
+            # Double check that the splines have the same number of points
             if len(initial_points) != len(final_points):
-                print('#' + str(initial.name) + " has " + str(len(initial_points)) + \
-                        " points in spline " + str(i+1) + " and " + \
-                        str(final.name) + " has " + str(len(final_points)) + \
-                        " points in spline " + str(i+1) + \
-                        " which is not the same number.")
+                print(
+                    "#"
+                    + str(initial.name)
+                    + " has "
+                    + str(len(initial_points))
+                    + " points in spline "
+                    + str(i + 1)
+                    + " and "
+                    + str(final.name)
+                    + " has "
+                    + str(len(final_points))
+                    + " points in spline "
+                    + str(i + 1)
+                    + " which is not the same number."
+                )
                 print("#This means something went wrong when processing morph chains.")
-                print('#I gotchu this time, but you might wanna take a look back and fix the underlying issue.')
+                print(
+                    "#I gotchu this time, but you might wanna take a look back and fix the underlying issue."
+                )
                 num_points = max(len(final_points), len(initial_points))
                 if len(initial_points) < len(final_points):
-                    #bpy.context.scene.objects.link(initial)
-                    add_points_to_curve_splines(initial, total_points = num_points)
-                    #bpy.context.scene.objects.unlink(initial)
-                    #raise Warning("Oh dang. I actually don't gotchu. The rendered " + \
+                    bpy.context.scene.objects.link(initial)
+                    add_points_to_curve_splines(initial, total_points=num_points)
+                    # bpy.context.scene.objects.unlink(initial)
+                    # raise Warning("Oh dang. I actually don't gotchu. The rendered " + \
                     #                "curve is missing points, I think.")
                 else:
                     bpy.context.scene.objects.link(final)
-                    add_points_to_curve_splines(final, total_points = num_points)
+                    add_points_to_curve_splines(final, total_points=num_points)
                     bpy.context.scene.objects.unlink(final)
 
-            #Assign final_points values to initial_points
+            # Assign final_points values to initial_points
             for j in range(len(initial_points)):
                 initial_points[j].co = final_points[j].co
                 initial_points[j].handle_left = final_points[j].handle_left
                 initial_points[j].handle_right = final_points[j].handle_right
 
-
-        bpy.ops.object.mode_set(mode = 'OBJECT')
+        bpy.ops.object.mode_set(mode="OBJECT")
         if was_hidden:
             initial.hide = True
 
     def morph_curve(self, initial, final):
-        #equalize_spline_count(initial, final)
+        # equalize_spline_count(initial, final)
         char_set = [initial, final]
         for char in char_set:
             if self.reindex_points_before_morph == True:
                 for spline in char.data.splines:
                     reindex_to_top_point(spline)
-            #add_points_to_curve_splines(char, CONTROL_POINTS_PER_SPLINE)
+            # add_points_to_curve_splines(char, CONTROL_POINTS_PER_SPLINE)
         self.add_morph_shape_keys(initial, final)
 
     def calc_lengths(self):
@@ -882,13 +1039,15 @@ class SVGBobject(Bobject):
             curves = self.get_figure_curves(expr)
             right_most_x = -math.inf
             for char in curves:
-                #char is a bobject, so reassign to the contained curve
+                # char is a bobject, so reassign to the contained curve
                 char = char.objects[0]
                 for spline in char.data.splines:
                     for point in spline.bezier_points:
-                        candidate = char.matrix_local.translation[0] + \
-                            char.parent.matrix_local.translation[0] + \
-                            point.co[0] * char.scale[0]
+                        candidate = (
+                            char.matrix_local.translation[0]
+                            + char.parent.matrix_local.translation[0]
+                            + point.co[0] * char.scale[0]
+                        )
                         if right_most_x < candidate:
                             right_most_x = candidate
 
@@ -897,31 +1056,35 @@ class SVGBobject(Bobject):
                 char = char.objects[0]
                 for spline in char.data.splines:
                     for point in spline.bezier_points:
-                        candidate = char.matrix_local.translation[0] + \
-                            char.parent.matrix_local.translation[0] + \
-                            point.co[0] * char.scale[0]
+                        candidate = (
+                            char.matrix_local.translation[0]
+                            + char.parent.matrix_local.translation[0]
+                            + point.co[0] * char.scale[0]
+                        )
                         if left_most_x > candidate:
                             left_most_x = candidate
 
             length = right_most_x - left_most_x
             center = left_most_x + length / 2
 
-            self.imported_svg_data[expr]['length'] = length * self.intrinsic_scale[0]
-            #Tbh, I don't remember why only the length is scaled
-            self.imported_svg_data[expr]['centerx'] = center
-            self.imported_svg_data[expr]['beginning'] = left_most_x #Untested
-            self.imported_svg_data[expr]['end'] = right_most_x
+            self.imported_svg_data[expr]["length"] = length * self.intrinsic_scale[0]
+            # Tbh, I don't remember why only the length is scaled
+            self.imported_svg_data[expr]["centerx"] = center
+            self.imported_svg_data[expr]["beginning"] = left_most_x  # Untested
+            self.imported_svg_data[expr]["end"] = right_most_x
 
-            #Vertical stuff
+            # Vertical stuff
             top_most_y = -math.inf
             for char in curves:
-                #char is a bobject, so reassign to the contained curve
+                # char is a bobject, so reassign to the contained curve
                 char = char.objects[0]
                 for spline in char.data.splines:
                     for point in spline.bezier_points:
-                        candidate = char.matrix_local.translation[1] + \
-                            char.parent.matrix_local.translation[1] + \
-                            point.co[1] * char.scale[1]
+                        candidate = (
+                            char.matrix_local.translation[1]
+                            + char.parent.matrix_local.translation[1]
+                            + point.co[1] * char.scale[1]
+                        )
                         if top_most_y < candidate:
                             top_most_y = candidate
 
@@ -930,23 +1093,25 @@ class SVGBobject(Bobject):
                 char = char.objects[0]
                 for spline in char.data.splines:
                     for point in spline.bezier_points:
-                        candidate = char.matrix_local.translation[1] + \
-                            char.parent.matrix_local.translation[1] + \
-                            point.co[1] * char.scale[1]
+                        candidate = (
+                            char.matrix_local.translation[1]
+                            + char.parent.matrix_local.translation[1]
+                            + point.co[1] * char.scale[1]
+                        )
                         if bottom_most_y > candidate:
                             bottom_most_y = candidate
 
             height = top_most_y - bottom_most_y
             center = bottom_most_y + height / 2
 
-            self.imported_svg_data[expr]['top'] = top_most_y
-            self.imported_svg_data[expr]['bottom'] = bottom_most_y
-            self.imported_svg_data[expr]['height'] = height * self.intrinsic_scale[1]
-            self.imported_svg_data[expr]['centery'] = (top_most_y + bottom_most_y) / 2
+            self.imported_svg_data[expr]["top"] = top_most_y
+            self.imported_svg_data[expr]["bottom"] = bottom_most_y
+            self.imported_svg_data[expr]["height"] = height * self.intrinsic_scale[1]
+            self.imported_svg_data[expr]["centery"] = (top_most_y + bottom_most_y) / 2
 
     def get_figure_curves(self, fig):
-        #Really just here to be overridden by tex_bobject
-        return self.imported_svg_data[fig]['curves']
+        # Really just here to be overridden by tex_bobject
+        return self.imported_svg_data[fig]["curves"]
 
     def align_figures(self):
         self.calc_lengths()
@@ -955,132 +1120,133 @@ class SVGBobject(Bobject):
 
     def align_figure(self, fig):
         data = self.imported_svg_data
-        curve_list = data[fig]['curves']
+        curve_list = data[fig]["curves"]
         offset = list(curve_list[0].ref_obj.location)
 
         if self.centered == True:
-            cen = data[fig]['centerx']
+            cen = data[fig]["centerx"]
             offset[0] = cen
-        elif self.centered == 'right':
-            offset[0] = data[fig]['end']
-        elif self.centered == 'top_centered':
-            offset[0] = data[fig]['centerx']
-            offset[1] = data[fig]['top']
-        elif self.centered == 'x_and_y':
-            offset[0] = data[fig]['centerx']
-            offset[1] = data[fig]['centery']
+        elif self.centered == "right":
+            offset[0] = data[fig]["end"]
+        elif self.centered == "top_centered":
+            offset[0] = data[fig]["centerx"]
+            offset[1] = data[fig]["top"]
+        elif self.centered == "x_and_y":
+            offset[0] = data[fig]["centerx"]
+            offset[1] = data[fig]["centery"]
         else:
-            offset[0] = data[fig]['beginning']
+            offset[0] = data[fig]["beginning"]
 
         for i in range(len(curve_list)):
-            #For some reason, just subtracting the vector-valued locations
-            #doesn't work here. I'm baffled. Anyway, it works to convert to
-            #lists and subtract by element.
+            # For some reason, just subtracting the vector-valued locations
+            # doesn't work here. I'm baffled. Anyway, it works to convert to
+            # lists and subtract by element.
             loc = list(curve_list[i].ref_obj.location)
-            new_loc = add_lists_by_element(loc, offset, subtract = True)
+            new_loc = add_lists_by_element(loc, offset, subtract=True)
             curve_list[i].ref_obj.location = new_loc
             curve_list[i].ref_obj.parent = self.ref_obj
 
-        return curve_list #Used in subclass
+        return curve_list  # Used in subclass
+
 
 class SVGFromBlend(SVGBobject):
     def __init__(self, *filenames, **kwargs):
         super().__init__(*filenames, **kwargs)
 
     def get_file_paths(self, filenames):
-        #Should just be one file for SVGFromBlend, prepping to import.
-        #Might be multiple strings in the format helpers.import_object takes
+        # Should just be one file for SVGFromBlend, prepping to import.
+        # Might be multiple strings in the format helpers.import_object takes
         self.paths = list(filenames)
 
     def import_svg_data(self):
-        #import from the .blend file and add curves to self.imported_svg_data,
-        #mimicking the data structure of regular svg bobjects
+        # import from the .blend file and add curves to self.imported_svg_data,
+        # mimicking the data structure of regular svg bobjects
         paths = self.paths
         self.imported_svg_data = {}
 
-        #For this type of object, the path list items are lists, which can
-        #have multiple strings to feed to import_objects()
+        # For this type of object, the path list items are lists, which can
+        # have multiple strings to feed to import_objects()
         for i, path in enumerate(paths):
             if path == None:
                 name = path
-                #null = new_null_curve()
-                #cur = null.ref_obj.children[0]
-                #equalize_spline_count(cur, 1)
-                #self.imported_svg_data[path]['curves'].append(cur)
-                #print(self.imported_svg_data[path]['curves'])
-                #print('length: ' + str(len(cur.data.splines)))
-                #print('length: ' + str(len(cur.data.splines[0].bezier_points)))
-                #continue
+                # null = new_null_curve()
+                # cur = null.ref_obj.children[0]
+                # equalize_spline_count(cur, 1)
+                # self.imported_svg_data[path]['curves'].append(cur)
+                # print(self.imported_svg_data[path]['curves'])
+                # print('length: ' + str(len(cur.data.splines)))
+                # print('length: ' + str(len(cur.data.splines[0].bezier_points)))
+                # continue
             else:
                 name = str(path)
-                '''if isinstance(name, list):
+                """if isinstance(name, list):
                     name = name[0]
                 name = str(name)
-                print(name)'''
-            self.imported_svg_data[name] = {'curves' : []}
+                print(name)"""
+            self.imported_svg_data[name] = {"curves": []}
             new_curve_bobj = self.import_and_modify_curve(i, path)
-            #self.modify_curves(new_curve_bobj.ref_obj.children[0].children[0])
-            #self.modify_curves()
+            # self.modify_curves(new_curve_bobj.ref_obj.children[0].children[0])
+            # self.modify_curves()
 
             new_curves = []
-            #These will all have container objects because they were likely
-            #made as regular svgbobjects the first time, so just take the actual
-            #curves.
+            # These will all have container objects because they were likely
+            # made as regular svgbobjects the first time, so just take the actual
+            # curves.
 
             for obj in new_curve_bobj.ref_obj.children:
                 new_curves.append(obj.children[0])
-                #print(new_curves[-1].type)
+                # print(new_curves[-1].type)
 
-            #self.imported_svg_data[name]['curves'] = new_curves
+            # self.imported_svg_data[name]['curves'] = new_curves
 
-            #After calling import_objects(), it's best for paths to not be lists
-            #for i in range(len(self.paths)):
+            # After calling import_objects(), it's best for paths to not be lists
+            # for i in range(len(self.paths)):
             #    self.paths[i] = str(self.paths[i])
 
             for j, curve in enumerate(new_curves):
-                curve_bobj = bobject.Bobject(objects = [curve])
-                #Make the bobject's ref_obj handle location
+                curve_bobj = bobject.Bobject(objects=[curve])
+                # Make the bobject's ref_obj handle location
                 curve_bobj.ref_obj.location = curve.location
                 curve.location = [0, 0, 0]
                 curve_bobj.ref_obj.rotation_euler = curve.rotation_euler
                 curve.rotation_euler = [0, 0, 0]
 
-                self.imported_svg_data[name]['curves'].append(curve_bobj)
+                self.imported_svg_data[name]["curves"].append(curve_bobj)
 
-        #print(self.imported_svg_data)
-        #print(self.paths)
+        # print(self.imported_svg_data)
+        # print(self.paths)
 
     def import_and_modify_curve(self, index, path):
 
-        #This is unfinished. Something is wrong with the way it makes the
-        #rendered curve objects out of the imported ones.
+        # This is unfinished. Something is wrong with the way it makes the
+        # rendered curve objects out of the imported ones.
 
-        #Extended by subclass
-        #index is needed for subclass implementation to know which curve it's
-        #modifying.
-        imported = import_object(path, 'svgblend')
+        # Extended by subclass
+        # index is needed for subclass implementation to know which curve it's
+        # modifying.
+        imported = import_object(path, "svgblend")
 
         new_curve_bobj = bobject.Bobject(
-            objects = imported.ref_obj.children[0].children,
-            name = 'imported_svg_object'
+            objects=imported.ref_obj.children[0].children, name="imported_svg_object"
         )
-        #new_curve_bobj.add_to_blender(appear_frame = 0)
+        # new_curve_bobj.add_to_blender(appear_frame = 0)
 
         return new_curve_bobj
 
+
 def reindex_to_top_point(spline):
-    #Make it so the highest control point is at index 0
-    #This eliminates net rotation of points around the curve as they transition
-    #from the starting char to the target char
-    #Rotation would be fine, but they actually just go in a straight line,
-    #causing the curve to sometimes fold on itself
+    # Make it so the highest control point is at index 0
+    # This eliminates net rotation of points around the curve as they transition
+    # from the starting char to the target char
+    # Rotation would be fine, but they actually just go in a straight line,
+    # causing the curve to sometimes fold on itself
     points = spline.bezier_points
-    #Find index of highest point in curve
+    # Find index of highest point in curve
     index_highest = 0
     for i in range(len(points)):
-        if points[i].co[1] > points[index_highest].co[1]: #Compare y values
+        if points[i].co[1] > points[index_highest].co[1]:  # Compare y values
             index_highest = i
-    #copy point data to lists
+    # copy point data to lists
     positions = []
     left_handles = []
     right_handles = []
@@ -1088,38 +1254,37 @@ def reindex_to_top_point(spline):
         positions.append(deepcopy(point.co))
         left_handles.append(deepcopy(point.handle_left))
         right_handles.append(deepcopy(point.handle_right))
-    #re-index copied lists
+    # re-index copied lists
     for i in range(index_highest):
         positions.append(positions.pop(0))
         left_handles.append(left_handles.pop(0))
         right_handles.append(right_handles.pop(0))
-        #Would just do this:
+        # Would just do this:
         #   points.append(points.pop(0))
-        #but points has type bpy_prop_collection, which is doesn't have
-        #list methods and is immutable
-    #assign values to blender bezier points
+        # but points has type bpy_prop_collection, which is doesn't have
+        # list methods and is immutable
+    # assign values to blender bezier points
     for i in range(len(points)):
         points[i].co = positions[i]
         points[i].handle_left = left_handles[i]
         points[i].handle_right = right_handles[i]
 
+
 def add_points_to_curve_splines(
-    curve,
-    total_points = CONTROL_POINTS_PER_SPLINE,
-    closed_loop = True
+    curve, total_points=CONTROL_POINTS_PER_SPLINE, closed_loop=True
 ):
-    #if len(curve.data.splines[0].bezier_points) < total_points:
+    # if len(curve.data.splines[0].bezier_points) < total_points:
     was_hidden = False
-    if curve.hide:
+    if curve.hide_viewport:
         was_hidden = True
-    curve.hide = False
-    bpy.context.scene.objects.active = curve
-    bpy.ops.object.mode_set(mode = 'EDIT')
-    #Use subdivides to make control points that don't affect shape
+    curve.hide_viewport = False
+    bpy.context.view_layer.objects.active = curve
+    bpy.ops.object.mode_set(mode="EDIT")
+    # Use subdivides to make control points that don't affect shape
     for spline in curve.data.splines:
         points = spline.bezier_points
         while len(spline.bezier_points) < total_points:
-            #find longest segment to subdivide, ignores curvature
+            # find longest segment to subdivide, ignores curvature
             longest = 0
             start_index = 0
             end_index = 1
@@ -1134,29 +1299,30 @@ def add_points_to_curve_splines(
                     else:
                         k = j + 1
                     length = points[k].co[0] - points[j].co[0]
-                    #This is a hacky way of making it work for graph curves
-                    #bpy making it as uniform as possible along x.
-                    #Doesn't make sense in general.
+                    # This is a hacky way of making it work for graph curves
+                    # bpy making it as uniform as possible along x.
+                    # Doesn't make sense in general.
 
                 if length > longest:
                     start_index = j
                     end_index = k
                     longest = length
 
-            #subdivide longest segments
+            # subdivide longest segments
             points[start_index].select_control_point = True
             points[end_index].select_control_point = True
-            #execute_and_time("Get ready to subdivide")
-            #execute_and_time(
+            # execute_and_time("Get ready to subdivide")
+            # execute_and_time(
             #    "Subdivide",
             bpy.ops.curve.subdivide()
-            #)
+            # )
             for point in points:
                 point.select_control_point = False
 
-    bpy.ops.object.mode_set(mode = 'OBJECT')
+    bpy.ops.object.mode_set(mode="OBJECT")
     if was_hidden:
         curve.hide = True
+
 
 def equalize_spline_count(curve1, target):
     splines1 = curve1.data.splines
@@ -1168,26 +1334,28 @@ def equalize_spline_count(curve1, target):
         spline_count = max(len(splines1), len(splines2))
 
     while len(splines1) < spline_count:
-        new_spline = splines1.new('BEZIER')
-        new_spline.bezier_points.add(count = 2)
+        new_spline = splines1.new("BEZIER")
+        new_spline.bezier_points.add(count=2)
         new_spline.use_cyclic_u = True
     if not isinstance(target, int):
         while len(splines2) < spline_count:
-            new_spline = splines2.new('BEZIER')
-            new_spline.bezier_points.add(count = 2)
+            new_spline = splines2.new("BEZIER")
+            new_spline.bezier_points.add(count=2)
             new_spline.use_cyclic_u = True
+
 
 def get_list_of_spline_length_ranks(curve):
     splines = curve.data.splines
     curve_splines_ranked_by_length = []
 
-    #get a list of splines and sort them by length
-    #we have to do this because 'splines' is a bpy_prop_collection, not a list
-    #meaning it doesn't have list methods.
+    # get a list of splines and sort them by length
+    # we have to do this because 'splines' is a bpy_prop_collection, not a list
+    # meaning it doesn't have list methods.
     for spline in splines:
         curve_splines_ranked_by_length.append(spline)
-    curve_splines_ranked_by_length.sort(key = lambda x: get_spline_length(x), \
-                                                                reverse=True)
+    curve_splines_ranked_by_length.sort(
+        key=lambda x: get_spline_length(x), reverse=True
+    )
 
     list_of_length_ranks = []
     for spline in splines:
@@ -1195,6 +1363,7 @@ def get_list_of_spline_length_ranks(curve):
         list_of_length_ranks.append(rank)
 
     return list_of_length_ranks
+
 
 def get_spline_length(spline):
     points = spline.bezier_points
@@ -1205,44 +1374,82 @@ def get_spline_length(spline):
         length += sep.length
     return length
 
-def new_null_curve(
-    parent = None,
-    location = (0, 0, 0),
-    rotation = (0, 0, 0),
-    #color = 'color5',
-    reuse_object = None
-):
-    #print("    Adding null curve")
 
-    #if reuse_object == None:
-    data = bpy.data.curves.new(name = 'no_curve_data', type = 'CURVE')
-    obj = bpy.data.objects.new(name = 'no_curve', object_data = data)
-    #else:
+def new_null_curve(
+    parent=None,
+    location=(0, 0, 0),
+    rotation=(0, 0, 0),
+    # color = 'color5',
+    reuse_object=None,
+):
+    """Add a new null curve.
+
+    Parameters
+    ----------
+    parent
+
+    location
+
+    rotation
+
+    reuse_object
+
+    Returns
+    -------
+    bobj: `.Bobject`
+        Bobject null curve.
+    """
+    # print("    Adding null curve")
+
+    # if reuse_object == None:
+    data = bpy.data.curves.new(name="no_curve_data", type="CURVE")
+    obj = bpy.data.objects.new(name="no_curve", object_data=data)
+    # else:
     #    print('Reusing object!!!!!!')
     #    obj = reuse_object
 
-    bobj = bobject.Bobject(objects = [obj], name = 'null')
-    #obj.parent = bobj.ref_obj
-    #bobj.objects.append(obj)
+    bobj = bobject.Bobject(objects=[obj], name="null")
+    # obj.parent = bobj.ref_obj
+    # bobj.objects.append(obj)
 
     bobj.ref_obj.parent = parent
-    #print(matrix_local)
+    # print(matrix_local)
     bobj.ref_obj.location = location
     bobj.ref_obj.rotation_euler = rotation
-    #print(bobj.ref_obj.matrix_local)
-    #bpy.context.scene.objects.link(new_null)
-    #if reuse_object == None:
+    # print(bobj.ref_obj.matrix_local)
+    # bpy.context.scene.objects.link(new_null)
+    # if reuse_object == None:
     #    bobj.add_to_blender(animate = False)
 
-    #apply_material(obj, color)
-    #bpy.data.scenes[0].update()
+    # apply_material(obj, color)
+    # bpy.data.scenes[0].update()
 
-    #print('    Done adding null curve')
+    # print('    Done adding null curve')
 
     return bobj
 
+
 def get_shared_substrings(expr1, expr2):
-    #not actually strings, but a series of curves that represent letters, mostly
+    """
+    Get shared substrings.
+
+    Not actually strings, but a series of curves that represent letters, mostly.
+
+    Parameters
+    ----------
+    expr1: list(curves(Object?))
+        List of curves that make up the exprssion.
+
+    expr2: list(curves(Object?))
+        List of curves that make up the exprssion.
+
+    Returns
+    -------
+    shared: list(list)
+        List of lists of the type [i, j, length], specifying equal expression, where i is
+        the index for the curve in expression 1, j is the index for curve in expression 2
+        and length the length where the expressions are equal.
+    """
     curves1 = expr1
     curves2 = expr2
 
@@ -1256,12 +1463,12 @@ def get_shared_substrings(expr1, expr2):
             if length > 0:
                 candidate = [i, j, length]
 
-                #Check whether candidate is redundant with a substring we
-                #already found. E.g., without this, comparing '01' with '012'
-                #would find the '01' and '1' substrings. We just want the longer
-                #one.
+                # Check whether candidate is redundant with a substring we
+                # already found. E.g., without this, comparing '01' with '012'
+                # would find the '01' and '1' substrings. We just want the longer
+                # one.
                 redundant = False
-                '''
+                """
                 #Actually, think we want redundancy, at least until speed becomes
                 #an issue. Without redundancy, morphing '123' to '1223' would
                 #result in the shared '3' being discarded, since it's redundant
@@ -1276,10 +1483,10 @@ def get_shared_substrings(expr1, expr2):
                 #substrings overlap, the left-most overlapping string is used.
                 #Since the left-most strings are never tossed, no redundancy is
                 #needed for backup.
-                '''
-                '''
+                """
+                """
                 Aaaaaaaactually, fuck redundancy. Things got slow.
-                '''
+                """
 
                 for substring in shared:
                     start1_diff = candidate[0] - substring[0]
@@ -1288,31 +1495,55 @@ def get_shared_substrings(expr1, expr2):
                     if start1_diff == start2_diff == -length_diff:
                         redundant = True
 
-
                 if redundant == False:
                     shared.append(candidate)
 
-    return(shared)
+    return shared
+
 
 def are_chars_same(char1, char2):
+    """
+    Check if *char1* is equal to *char2*.
+
+    Check if the blender curves have the same number of splines and the corresponding bezier
+    points are in the same location.
+
+    Parameters
+    ----------
+    char1: `bpy_types.Object`
+        Blender object for char1.
+
+    char2: `bpy_types.Object`
+        Blender object for char2.
+
+    Returns
+    -------
+    chars_are_equal: bool
+        True is the characters are equal.
+    """
     splines1 = char1.data.splines
     splines2 = char2.data.splines
     if len(splines1) != len(splines2):
-        return False
+        chars_are_equal = False
+        return chars_are_equal
     for spline1, spline2 in zip(splines1, splines2):
         points1 = spline1.bezier_points
         points2 = spline2.bezier_points
         for point1, point2 in zip(points1, points2):
             for coord1, coord2 in zip(point1.co, point2.co):
                 if round(coord1, 3) == round(coord2, 3):
-                    #When the svg is imported, coords are stored to many decimal
-                    #points. Even in characters we'd call equivalent, there is
-                    #some fluctuation in the less significant digits, so
-                    #rounding here yields the desired behavior.
+                    # When the svg is imported, coords are stored to many decimal
+                    # points. Even in characters we'd call equivalent, there is
+                    # some fluctuation in the less significant digits, so
+                    # rounding here yields the desired behavior.
                     pass
                 else:
-                    return False
-    return True
+                    chars_are_equal = False
+                    return chars_are_equal
+
+    chars_are_equal = True
+    return chars_are_equal
+
 
 def get_match_length(length, char1_index, char2_index, curves1, curves2):
     if are_chars_same(curves1[char1_index].objects[0], curves2[char2_index].objects[0]):
@@ -1321,7 +1552,9 @@ def get_match_length(length, char1_index, char2_index, curves1, curves2):
         char2_index += 1
 
         try:
-            length = get_match_length(length, char1_index, char2_index, curves1, curves2)
+            length = get_match_length(
+                length, char1_index, char2_index, curves1, curves2
+            )
 
             return length
         except:
@@ -1331,6 +1564,7 @@ def get_match_length(length, char1_index, char2_index, curves1, curves2):
             pass
         return length
 
+
 def get_substring_combos(substrings):
     combos = []
     combo_in_progress = []
@@ -1338,28 +1572,31 @@ def get_substring_combos(substrings):
 
     return combos
 
+
 def add_non_overlapping_substrings(combo_in_progress, combos, substrings):
     if len(combo_in_progress) > 0:
-        #Start checking substrings with the one after the last one added.
+        # Start checking substrings with the one after the last one added.
         starting_index = substrings.index(combo_in_progress[-1]) + 1
-        #starting_index = 0
+        # starting_index = 0
     else:
         starting_index = 0
 
     for i in range(starting_index, len(substrings)):
-        #check if substring works
+        # check if substring works
         candidate = substrings[i]
         no_overlap = True
-        #check if substring overlaps with any substring alredy
-        #in combo_in_progress. If so, don't add it to combos.
+        # check if substring overlaps with any substring alredy
+        # in combo_in_progress. If so, don't add it to combos.
         for sub in combo_in_progress:
-            #E.g., sub = [0, 0, 1] and candidate = [3, 0, 1] overlap
-            no_overlap_in_1 = candidate[0] >= sub[0] + sub[2] or \
-                              candidate[0] + candidate[2] <= sub[0]
-            no_overlap_in_2 = candidate[1] >= sub[1] + sub[2] or \
-                              candidate[1] + candidate[2] <= sub[1]
+            # E.g., sub = [0, 0, 1] and candidate = [3, 0, 1] overlap
+            no_overlap_in_1 = (
+                candidate[0] >= sub[0] + sub[2] or candidate[0] + candidate[2] <= sub[0]
+            )
+            no_overlap_in_2 = (
+                candidate[1] >= sub[1] + sub[2] or candidate[1] + candidate[2] <= sub[1]
+            )
 
-            no_overlap = (no_overlap_in_1 and no_overlap_in_2)
+            no_overlap = no_overlap_in_1 and no_overlap_in_2
 
             if no_overlap == False:
                 break
@@ -1371,6 +1608,7 @@ def add_non_overlapping_substrings(combo_in_progress, combos, substrings):
             combos = add_non_overlapping_substrings(new_combo, combos, substrings)
 
     return combos
+
 
 def main():
 
